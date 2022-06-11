@@ -1,31 +1,69 @@
 pub mod shaders;
 pub mod vulkan_compute;
 
-use std::sync::Arc;
-use image::RgbImage;
-use image::RgbaImage;
-use vulkano::buffer::BufferUsage;
-use vulkano::buffer::CpuAccessibleBuffer;
-use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::command_buffer::CommandBufferUsage;
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
-use vulkano::format::Format;
-use vulkano::image::StorageImage;
-use vulkano::image::view::ImageView;
-use vulkano::instance::Instance;
-use vulkano::pipeline::ComputePipeline;
-use vulkano::pipeline::Pipeline;
-use vulkano::pipeline::PipelineBindPoint;
-use vulkano::sync::GpuFuture;
 use crate::fractalgen::FractalType;
 use crate::fractalgen::PlaneTransform;
-// use crate::fractalgen::gpu_renderer::compute::vulkan_compute::ComputeOperation;
-// use crate::fractalgen::gpu_renderer::compute::vulkan_compute::VulkanComputeInstance;
 
-pub fn generate_fractal_image<'a>(vk_instance: &'a Arc<Instance>, fractal_type: FractalType, dimensions: (u32, u32), transform: &PlaneTransform<f64>, max_iterations: Option<u32>) -> RgbaImage {
+use image::RgbaImage;
+
+#[cfg(test)]
+mod test_shader {
+	vulkano_shaders::shader!{
+		ty: "compute",
+		path: "shaders/test_shader.glsl"
+	}
+}
+
+// TODO: Test VkCommands
+#[test]
+#[cfg(test)]
+fn test_vulkan_compute() {
+	use std::collections::HashMap;
+
+use crate::fractalgen::gpu_renderer::compute::vulkan_compute::{VkComputeOperation, VkDataStorage, VkExtent, VkInstance};
+	use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
+
+	let vk_instance = VkInstance::new();
+
+	vk_instance.with_target(|vk_target| {
+		// let mut storage_bindings = HashMap::with_capacity(1);
+		// storage_bindings.push((VkDataStorage::BufferU32(
+		// 	CpuAccessibleBuffer::from_iter(vk_target.device.clone(), BufferUsage::all(), false, (0..16000).map(|_| 0)).expect("Failed to create buffer")
+		// ), 0));
+		let storage_bindings = HashMap::from([
+			(
+				0,
+				VkDataStorage::BufferU32(
+						CpuAccessibleBuffer::from_iter(vk_target.device.clone(), BufferUsage::all(), false,
+							(0..16000).map(|_| 0)).expect("Failed to create buffer")
+				)
+			),
+			(
+				1,
+				VkDataStorage::BufferU32(
+					CpuAccessibleBuffer::from_iter(vk_target.device.clone(), BufferUsage::all(), false,
+						(0..16000).map(|_| 0)).expect("Failed to create buffer")
+				)
+			)
+		]);
+		let shader = test_shader::load(vk_target.device.clone()).expect("Failed to create shader");
+		let op = VkComputeOperation::new(&vk_target, &storage_bindings, (shader, "main"), VkExtent::new(16000, 1, 1));
+		op.execute();
+		if let VkDataStorage::BufferU32(buffer) = &storage_bindings[&0] {
+			let content = buffer.read().expect("Failed to read buffer");
+			for (i, val) in content.iter().enumerate() {
+				assert_eq!(i as u32, *val);
+			}
+			println!("Test was successful!")
+		}
+	});
+}
+
+pub fn generate_fractal_image<'a>(fractal_type: FractalType, dimensions: (u32, u32), transform: &PlaneTransform<f64>, max_iterations: Option<u32>) -> RgbaImage {
 	let (width, height) = dimensions;
 
 	todo!();
+
 	// // Create vulkan compute instance
 	// let vk_comp = VulkanComputeInstance::new(&vk_instance);
 
@@ -85,8 +123,6 @@ pub fn generate_fractal_image<'a>(vk_instance: &'a Arc<Instance>, fractal_type: 
 	// // 	compute_pipeline,
 	// // 	descriptor_set
 	// // };
-
-	// // TODO: Execute shader on working_img and copy working_img to result_buffer
 
 	// // vk_comp.execute_op(compute_op, (width, height, 1)); // This doesn't allow to specify what commands to include in the command buffer, such as copy commands
 

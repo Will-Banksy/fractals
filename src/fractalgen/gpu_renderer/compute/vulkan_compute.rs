@@ -13,38 +13,42 @@ use vulkano::pipeline::{Pipeline, ComputePipeline, PipelineBindPoint};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::shader::ShaderModule;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-trait VkCommand { // TODO: This needs to be updated to have descriptor sets and other things as parameters and stuff
-	fn add_to_buffer<T>(command_buffer_builder: &mut AutoCommandBufferBuilder<T>);
-}
+// TODO: This needs to be updated to have descriptor sets (and other things?) as parameters and stuff
+type VkCommand<T> = dyn FnOnce(&mut AutoCommandBufferBuilder<T>, &HashMap<u32, VkDataStorage>) -> ();
 
-struct VkInstance {
+#[derive(Clone)]
+pub struct VkInstance {
 	pub instance: Arc<Instance>
 }
 
-struct VkTarget<'a> {
+pub struct VkTarget<'a> {
 	pub physical: PhysicalDevice<'a>,
 	pub queue_family: QueueFamily<'a>,
 	pub device: Arc<Device>,
 	pub queue: Arc<Queue>,
 }
 
-struct VkComputeOperation<'a> {
-	vk_target: &'a VkTarget<'a>,
-	command_buffer: Arc<PrimaryAutoCommandBuffer>
+pub struct VkComputeOperation<'a> {
+	pub vk_target: &'a VkTarget<'a>,
+	pub command_buffer: Arc<PrimaryAutoCommandBuffer>,
+	pub storage_bindings: &'a HashMap<u32, VkDataStorage> // TODO: Maybe change this again?
 }
 
-enum VkDataStorage {
+#[derive(Clone)]
+pub enum VkDataStorage {
 	Image(Arc<StorageImage>),
 	BufferU8(Arc<CpuAccessibleBuffer<[u8]>>),
 	BufferU32(Arc<CpuAccessibleBuffer<[u32]>>)
 }
 
-struct VkExtent {
-	size_x: u32,
-	size_y: u32,
-	size_z: u32
+#[derive(Clone, Copy)]
+pub struct VkExtent {
+	pub size_x: u32,
+	pub size_y: u32,
+	pub size_z: u32
 }
 
 impl VkInstance {
@@ -114,7 +118,8 @@ impl<'a> VkTarget<'a> {
 
 impl<'a> VkComputeOperation<'a> {
 	// TODO: This needs to be updated to accept and use arbitrary VkCommands
-	pub fn new(vk_target: &'a VkTarget<'a>, storage_bindings: Vec<(VkDataStorage, u32)>, shader_entry_point: (Arc<ShaderModule>, &str), extent: VkExtent) -> Self {
+	/// If any dimension of `extent` is 0, the shader will not run
+	pub fn new(vk_target: &'a VkTarget<'a>, storage_bindings: &'a HashMap<u32, VkDataStorage>, shader_entry_point: (Arc<ShaderModule>, &str), extent: VkExtent) -> Self {
 		let pipeline = ComputePipeline::new(
 			vk_target.device.clone(),
 			shader_entry_point.0.entry_point(shader_entry_point.1).expect(&format!("Entry point \"{}\" not found or multiple instances found", shader_entry_point.1)),
@@ -127,11 +132,11 @@ impl<'a> VkComputeOperation<'a> {
 
 		let descriptor_set = PersistentDescriptorSet::new(
 			layout.clone(),
-			storage_bindings.iter().map(|(vk_storage, binding)| {
+			storage_bindings.iter().map(|(binding, vk_storage)| {
 				match vk_storage {
 					VkDataStorage::Image(image) => WriteDescriptorSet::image_view(*binding, ImageView::new(image.clone()).expect("Could not create ImageView")),
 					VkDataStorage::BufferU8(buffer) => WriteDescriptorSet::buffer(*binding, buffer.clone()),
-					_ => todo!("Unhandled VkDataStorage variant") // TODO
+					VkDataStorage::BufferU32(buffer) => WriteDescriptorSet::buffer(*binding, buffer.clone()),
 				}
 			})
 		).expect("Failed to create descriptor set");
@@ -147,18 +152,18 @@ impl<'a> VkComputeOperation<'a> {
 			.bind_descriptor_sets(PipelineBindPoint::Compute, pipeline.layout().clone(), 0, descriptor_set)
 			.dispatch([extent.size_x, extent.size_y, extent.size_z])
 			// TODO: Execute arbitrary VkCommands
-			.expect("Failed to bind resources and/or add the dispatch command to the AutoCommandBufferBuilder");
+			.expect("Failed to add the dispatch command to the AutoCommandBufferBuilder");
 
 		let command_buffer = Arc::new(builder.build().expect("Failed to build command buffer"));
 
 		VkComputeOperation {
 			vk_target,
-			command_buffer
+			command_buffer,
+			storage_bindings
 		}
 	}
 
-	// TODO: Add some way of reading data from buffers such as returning read handles
-	pub fn execute(&self) {
+	pub fn execute(&self) -> &HashMap<u32, VkDataStorage> {
 		let future = sync::now(self.vk_target.device.clone())
 			.then_execute(self.vk_target.queue.clone(), self.command_buffer.clone())
 			.expect("Failed to send command buffer to GPU for execution")
@@ -166,5 +171,13 @@ impl<'a> VkComputeOperation<'a> {
 			.expect("Failed to instruct GPU to signal fence upon completion and/or flush");
 
 		future.wait(None).expect("Timed out");
+
+		&self.storage_bindings
+	}
+}
+
+impl VkExtent {
+	pub fn new(size_x: u32, size_y: u32, size_z: u32) -> Self {
+		VkExtent { size_x, size_y, size_z }
 	}
 }
