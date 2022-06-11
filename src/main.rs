@@ -52,9 +52,16 @@ fn main() {
 	let offset = (960., 600.);//offset_presets[1];
 	let transform = PlaneTransform::new().scale(scale).base_offset(offset);
 
-	// let img = fractalgen::gpu_renderer::render_fractal_to(FractalType::MandelbrotSet, dims, &transform, Some(50));
-	// img.save(format!("mandelbrot.png")).unwrap();
-	panic!();
+	let extensions = InstanceExtensions {
+		.. InstanceExtensions::none()
+	};
+
+	// let vk_instance = Instance::new(Default::default()).expect("Failed to create instance");
+
+	let vk_instance = Instance::new(None, Version::V1_1, &extensions, None).expect("Failed to create Vulkan instance");
+
+	let img = fractalgen::gpu_renderer::compute::generate_fractal_image(&vk_instance, FractalType::MandelbrotSet, dims, &transform, Some(50));
+	img.save(format!("mandelbrot.png")).unwrap();
 }
 
 fn select_physical_graphics_device<'a>(

@@ -1,129 +1,95 @@
 pub mod shaders;
+pub mod vulkan_compute;
 
-use vulkano::instance::{Instance};
-use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType, QueueFamily};
-use vulkano::device::{Device, DeviceExtensions, Features, Queue};
-use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
-use vulkano::sync::{self, GpuFuture};
-use vulkano::pipeline::{Pipeline, ComputePipeline, PipelineBindPoint};
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
-
-use super::super::super::fractalgen::{PlaneTransform, FractalType, ImageBufferFormat};
 use std::sync::Arc;
+use image::RgbImage;
+use image::RgbaImage;
+use vulkano::buffer::BufferUsage;
+use vulkano::buffer::CpuAccessibleBuffer;
+use vulkano::command_buffer::AutoCommandBufferBuilder;
+use vulkano::command_buffer::CommandBufferUsage;
+use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::format::Format;
+use vulkano::image::StorageImage;
+use vulkano::image::view::ImageView;
+use vulkano::instance::Instance;
+use vulkano::pipeline::ComputePipeline;
+use vulkano::pipeline::Pipeline;
+use vulkano::pipeline::PipelineBindPoint;
+use vulkano::sync::GpuFuture;
+use crate::fractalgen::FractalType;
+use crate::fractalgen::PlaneTransform;
+use crate::fractalgen::gpu_renderer::compute::vulkan_compute::ComputeOperation;
+use crate::fractalgen::gpu_renderer::compute::vulkan_compute::VulkanComputeInstance;
 
-pub struct VulkanCompute {
-	physical: PhysicalDevice<'static>,
-	queue_family: QueueFamily<'static>,
-	device: Arc<Device>,
-	queue: Arc<Queue>
-}
+pub fn generate_fractal_image<'a>(vk_instance: &'a Arc<Instance>, fractal_type: FractalType, dimensions: (u32, u32), transform: &PlaneTransform<f64>, max_iterations: Option<u32>) -> RgbaImage {
+	let (width, height) = dimensions;
 
-impl VulkanCompute {
-	pub fn new(vk_instance: &'static Arc<Instance>) -> Self {
-		let device_extensions = DeviceExtensions {
-			..DeviceExtensions::none()
-		};
+	// Create vulkan compute instance
+	let vk_comp = VulkanComputeInstance::new(&vk_instance);
 
-		let (physical, queue_family) = VulkanCompute::select_compute_device(&vk_instance, &device_extensions);
+	let device = vk_comp.device.clone();
+	let shader = shaders::mandelbrot::load(device.clone()).expect("Failed to create shader");
+	let compute_pipeline = ComputePipeline::new(device.clone(), shader.entry_point("main").unwrap(), &(), None, |_| {}).unwrap();
 
-		println!("Using vulkan device: {} (type: {:?})", physical.properties().device_name, physical.properties().device_type);
+	let working_img = StorageImage::new(
+		device.clone(),
+		vulkano::image::ImageDimensions::Dim2d { width, height, array_layers: 1 },
+		Format::R8G8B8A8_UNORM,
+		Some(vk_comp.queue_family)
+	).expect("Failed to create image");
+	let working_img_view = ImageView::new(working_img.clone()).unwrap();
 
-		let (device, mut queues) = Device::new(
-			physical,
-			&Features::none(),
-			&physical.required_extensions().union(&device_extensions),
-			[(queue_family, 0.5)].iter().cloned()
-		).expect("Failed to create a device");
+	let result_buffer = CpuAccessibleBuffer::from_iter(
+		device.clone(),
+		BufferUsage::all(),
+		false,
+		(0..(width * height * 4)).map(|_| 0)
+	).expect("Failed to create buffer");
 
-		let queue = queues.next().unwrap();
+	let layout = compute_pipeline.layout().descriptor_set_layouts().get(0).unwrap();
 
-		VulkanCompute {
-			physical,
-			queue_family,
-			device,
-			queue
-		}
-	}
+	let descriptor_set = PersistentDescriptorSet::new(layout.clone(), [WriteDescriptorSet::image_view(0, working_img_view.clone())]).unwrap();
 
-	pub fn select_compute_device(instance: &'static Arc<Instance>, device_extensions: &DeviceExtensions) -> (PhysicalDevice<'static>, QueueFamily<'static>) {
-		PhysicalDevice::enumerate(&instance)
-			.filter(|&p| p.supported_extensions().is_superset_of(&device_extensions))
-			.filter_map(|p| {
-				// The Vulkan specs guarantee that a compliant implementation must provide at least one queue that supports compute operations
-				p.queue_families()
-					.find(|&q| q.supports_compute())
-					.map(|q| (p, q))
-			})
-			.min_by_key(|(p, _)| match p.properties().device_type {
-				PhysicalDeviceType::DiscreteGpu => 0,
-				PhysicalDeviceType::IntegratedGpu => 1,
-				PhysicalDeviceType::VirtualGpu => 2,
-				PhysicalDeviceType::Cpu => 3,
-				PhysicalDeviceType::Other => 4
-			}).expect("No vulkan implementations found")
-	}
+	// Command buffer builder - For now, we'll just have it submit once. May do some optimisation later with reusing the command buffer
+	let mut builder = AutoCommandBufferBuilder::primary(
+		device.clone(),
+		vk_comp.queue_family.clone(),
+		CommandBufferUsage::OneTimeSubmit
+	).unwrap();
 
-	pub fn render_fractal_to(&self, img_buffer_fmt: ImageBufferFormat, fractal_type: FractalType, dimensions: (u32, u32), transform: &PlaneTransform<f64>, max_iterations: Option<u32>) {
-		println!("Starting Vulkan stuff...");
+	builder
+		.bind_pipeline_compute(compute_pipeline.clone())
+		.bind_descriptor_sets(PipelineBindPoint::Compute, compute_pipeline.layout().clone(), 0, descriptor_set)
+		.dispatch([width, height, 1])
+		.unwrap()
+		.copy_image_to_buffer(working_img.clone(), result_buffer.clone())
+		.unwrap();
 
-		let (width, height) = dimensions;
+	let command_buffer = builder.build().unwrap();
 
-		if true { // Render mandelbrot example
-			// Create data buffer to be operated on
-			let data_dat = (0..(width * height)).map(|_| 0);
-			let data_buf = CpuAccessibleBuffer::from_iter(self.device.clone(), BufferUsage::all(), false, data_dat).expect("Failed to create buffer");
+	let future = vulkano::sync::now(device.clone())
+		.then_execute(vk_comp.queue.clone(), command_buffer)
+		.unwrap()
+		// Instruct the GPU to signal a 'fence' once the command buffer has finished execution. A fence is the GPU telling the CPU that it has reached a certain point
+		.then_signal_fence_and_flush()
+		.unwrap();
 
-			let shader = shaders::mandelbrot::compute::load(self.device.clone()).expect("Failed to create shader module");
+	// Wait until the GPU signals fence
+	// Dropping the future would wait anyway this is just more explicit
+	future.wait(None).unwrap();
 
-			let compute_pipeline = ComputePipeline::new(
-				self.device.clone(),
-				shader.entry_point("main").unwrap(),
-				&(),
-				None,
-				|_| {}
-			).expect("Failed to create compute pipeline");
+	// let compute_op = ComputeOperation {
+	// 	shader,
+	// 	compute_pipeline,
+	// 	descriptor_set
+	// };
 
-			let layout = compute_pipeline
-				.layout()
-				.descriptor_set_layouts()
-				.get(0)
-				.unwrap();
+	// TODO: Execute shader on working_img and copy working_img to result_buffer
 
-			let set = PersistentDescriptorSet::new(layout.clone(), [WriteDescriptorSet::buffer(0, data_buf.clone())]).unwrap();
+	// vk_comp.execute_op(compute_op, (width, height, 1)); // This doesn't allow to specify what commands to include in the command buffer, such as copy commands
 
-			let mut builder = AutoCommandBufferBuilder::primary(self.device.clone(), self.queue.family(), CommandBufferUsage::OneTimeSubmit).unwrap();
+	let working_buffer_content = result_buffer.read().unwrap();
 
-			builder.bind_pipeline_compute(compute_pipeline.clone())
-				.bind_descriptor_sets(
-					PipelineBindPoint::Compute,
-					compute_pipeline.layout().clone(),
-					0,
-					set
-				)
-				.dispatch([1024, 1, 1])
-				.unwrap();
-
-			let command_buffer = builder.build().unwrap();
-
-			let future = sync::now(self.device.clone())
-				.then_execute(self.queue.clone(), command_buffer)
-				.unwrap()
-				.then_signal_fence_and_flush()
-				.unwrap();
-
-			future.wait(None).unwrap();
-
-			let content = data_buf.read().unwrap();
-			for n in content.iter() {
-				assert_eq!(*n, 0xffffffu32);
-			}
-		}
-
-		println!("Finished Vulkan stuff successfully");
-	}
-
-// pub fn render_mandelbrot_window() {
-// 	unimplemented!();
-// }
+	RgbaImage::from_raw(width, height, working_buffer_content[..].to_vec()).unwrap()
 }

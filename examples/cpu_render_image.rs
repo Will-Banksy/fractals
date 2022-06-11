@@ -25,11 +25,11 @@ fn main() {
 		]
 	);
 
-	let dims = (1920, 1200);//dims_presets[1];
-	let scale = (0.002, 0.002);//scale_presets[1];
-	let offset = (960., 600.);//offset_presets[1];
+	let dims = dims_presets[1];//(1920, 1200);//dims_presets[1];
+	let scale = scale_presets[1];//(0.002, 0.002);//scale_presets[1];
+	let offset = offset_presets[1];//(960., 600.);//offset_presets[1];
 	let transform = PlaneTransform::new().scale(scale).base_offset(offset);
 
-	let img = fractalgen::cpu_renderer::multi_threaded::generate_fractal_image(FractalType::MandelbrotSet, dims, &transform, Some(50));
+	let img = fractalgen::cpu_renderer::multi_threaded::generate_fractal_image(FractalType::MandelbrotSet, dims, &transform, Some(500));
 	img.save(format!("mandelbrot.png")).unwrap();
 }
