@@ -3,8 +3,19 @@ pub mod vulkan_compute;
 
 use crate::fractalgen::FractalType;
 use crate::fractalgen::PlaneTransform;
+use crate::fractalgen::gpu_renderer::compute::vulkan_compute::VkComputeOperation;
+use crate::fractalgen::gpu_renderer::compute::vulkan_compute::VkDataStorage;
+use crate::fractalgen::gpu_renderer::compute::vulkan_compute::VkExtent;
+use crate::fractalgen::gpu_renderer::compute::vulkan_compute::VkInstance;
 
 use image::RgbaImage;
+use vulkano::buffer::BufferUsage;
+use vulkano::buffer::CpuAccessibleBuffer;
+use vulkano::command_buffer::AutoCommandBufferBuilder;
+use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use vulkano::image::ImageDimensions;
+use vulkano::image::StorageImage;
+use vulkano::format::Format;
 
 #[cfg(test)]
 mod test_shader {
@@ -18,38 +29,29 @@ mod test_shader {
 #[test]
 #[cfg(test)]
 fn test_vulkan_compute() {
-	use std::collections::HashMap;
-
-use crate::fractalgen::gpu_renderer::compute::vulkan_compute::{VkComputeOperation, VkDataStorage, VkExtent, VkInstance};
+	use crate::fractalgen::gpu_renderer::compute::vulkan_compute::{VkComputeOperation, VkDataStorage, VkExtent, VkInstance};
 	use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 
 	let vk_instance = VkInstance::new();
 
 	vk_instance.with_target(|vk_target| {
-		// let mut storage_bindings = HashMap::with_capacity(1);
-		// storage_bindings.push((VkDataStorage::BufferU32(
-		// 	CpuAccessibleBuffer::from_iter(vk_target.device.clone(), BufferUsage::all(), false, (0..16000).map(|_| 0)).expect("Failed to create buffer")
-		// ), 0));
-		let storage_bindings = HashMap::from([
-			(
-				0,
-				VkDataStorage::BufferU32(
-						CpuAccessibleBuffer::from_iter(vk_target.device.clone(), BufferUsage::all(), false,
-							(0..16000).map(|_| 0)).expect("Failed to create buffer")
-				)
+		let data = vec![
+			VkDataStorage::BufferU32(
+				CpuAccessibleBuffer::from_iter(vk_target.device.clone(), BufferUsage::all(), false,
+					(0..16000).map(|_| 0)).expect("Failed to create buffer")
 			),
-			(
-				1,
-				VkDataStorage::BufferU32(
-					CpuAccessibleBuffer::from_iter(vk_target.device.clone(), BufferUsage::all(), false,
-						(0..16000).map(|_| 0)).expect("Failed to create buffer")
-				)
+			VkDataStorage::BufferU32(
+				CpuAccessibleBuffer::from_iter(vk_target.device.clone(), BufferUsage::all(), false,
+					(0..16000).map(|_| 0)).expect("Failed to create buffer")
 			)
-		]);
+		];
+		let data_bindings = vec![vec![0]];
 		let shader = test_shader::load(vk_target.device.clone()).expect("Failed to create shader");
-		let op = VkComputeOperation::new(&vk_target, &storage_bindings, (shader, "main"), VkExtent::new(16000, 1, 1));
-		op.execute();
-		if let VkDataStorage::BufferU32(buffer) = &storage_bindings[&0] {
+		let mut op = VkComputeOperation::new(&vk_target, &data, &data_bindings, (shader, "main"), VkExtent::new(16000, 1, 1));
+		op.dispatch().build().execute().unwrap();
+
+		// Check
+		if let VkDataStorage::BufferU32(buffer) = &data[0] {
 			let content = buffer.read().expect("Failed to read buffer");
 			for (i, val) in content.iter().enumerate() {
 				assert_eq!(i as u32, *val);
@@ -59,10 +61,41 @@ use crate::fractalgen::gpu_renderer::compute::vulkan_compute::{VkComputeOperatio
 	});
 }
 
+// TODO: Use fractal_type and pass transform and max_iterations to shader in a buffer (need new type of buffer in VkDataStorage. *Sigh* ideally you should be able to use any type... Need to think of how to do this)
 pub fn generate_fractal_image<'a>(fractal_type: FractalType, dimensions: (u32, u32), transform: &PlaneTransform<f64>, max_iterations: Option<u32>) -> RgbaImage {
 	let (width, height) = dimensions;
 
-	todo!();
+	let vk_instance = VkInstance::new();
+
+	vk_instance.with_target(|vk_target| {
+		let data = vec![
+			VkDataStorage::Image(
+				StorageImage::new(vk_target.device.clone(), ImageDimensions::Dim2d { width, height, array_layers: 1 },
+					Format::R8G8B8A8_UNORM, Some(vk_target.queue_family)).expect("Failed to create image")
+			),
+			VkDataStorage::BufferU8(
+				CpuAccessibleBuffer::from_iter(vk_target.device.clone(), BufferUsage::all(), false,
+					(0..(width * height * 4)).map(|_| 0)).expect("Failed to create buffer")
+			)
+		];
+		let data_bindings = vec![vec![0]];
+		let shader = shaders::mandelbrot::load(vk_target.device.clone()).expect("Failed to create shader");
+		let mut op = VkComputeOperation::new(&vk_target, &data, &data_bindings, (shader, "main"), VkExtent::new(width, height, 1));
+		op.dispatch().add_commands(vec![
+			|builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>| {
+				let image = data[0].image().unwrap();
+				let buffer = data[1].buffer_u8().unwrap();
+				builder.copy_image_to_buffer(image.clone(), buffer.clone())
+					.expect("Failed to submit copy command to builder");
+			}
+		]).build().execute().unwrap();
+
+		let working_buffer_content = data[1].buffer_u8().unwrap().read().unwrap()[..].to_vec();
+
+		RgbaImage::from_raw(width, height, working_buffer_content).unwrap()
+	})
+
+	// todo!();
 
 	// // Create vulkan compute instance
 	// let vk_comp = VulkanComputeInstance::new(&vk_instance);

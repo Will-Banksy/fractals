@@ -9,9 +9,53 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 // Declare a writeonly 2D image
 layout(set = 0, binding = 0, rgba8) uniform writeonly image2D img;
 
-// TODO: Actually compute the mandelbrot set
+#define cx_sq(z) vec2(z.x * z.x - z.y * z.y, z.x * z.y + z.y * z.x)
+
+/// Inputs: h: (0-360), s, br: (0-1)
+vec3 to_vec_hsb(float h, float s, float br) {
+	float k = mod(5.0 + h / 60.0, 6.0);
+	float r = br - br * s * max(0, min(min(k, 4.0 - k), 1.0));
+
+	k = mod(3.0 + h / 60.0, 6.0);
+	float g = br - br * s * max(0, min(min(k, 4.0 - k), 1.0));
+
+	k = mod(1.0 + h / 60.0, 6.0);
+	float b = br - br * s * max(0, min(min(k, 4.0 - k), 1.0));
+
+	// uint red = (uint)round(r * 255);
+	// uint green = (uint)round(g * 255);
+	// uint blue = (uint)round(b * 255);
+
+	return vec3(r, g, b);
+}
+
 void main() {
-	uint idx = gl_GlobalInvocationID.x;
-	vec4 pixdat = vec4(gl_GlobalInvocationID.x, 0.0, 0.0, 1.0);
+	const uint max_iter = 100;
+
+	vec2 xy = gl_GlobalInvocationID.xy;
+
+	vec2 base_offset = vec2(960, 600);
+	vec2 scale = vec2(0.002, 0.002);
+	vec2 transformed_offset = vec2(0.0, 0.0);
+
+	xy -= base_offset;
+	xy *= scale;
+	xy -= transformed_offset;
+
+	vec2 c = vec2(xy.x, xy.y);
+	vec2 z = vec2(0.0, 0.0);
+
+	uint i = 0;
+	while(i < max_iter && length(z) <= 2) {
+		z = cx_sq(z) + c;
+		i += 1;
+	}
+
+	vec3 rgb = vec3(0, 0, 0);
+	if(i != max_iter) {
+		rgb = to_vec_hsb((float(i) / 100.0) * 360.0, 1.0, 1.0);
+	}
+
+	vec4 pixdat = vec4(rgb, 1.0);
 	imageStore(img, ivec2(gl_GlobalInvocationID.xy), pixdat);
 }
