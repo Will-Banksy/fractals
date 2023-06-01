@@ -12,7 +12,17 @@ pub fn map_to_colour(iterations: f64, max_iterations: f64) -> Rgb {
 	}
 }
 
-pub fn ethan(iterations: f64, max_iterations: f64) -> Rgb {
+pub fn map_to_colour_loop(iterations: f64, max_iterations: f64) -> Rgb {
+	let n = iterations % max_iterations;
+	map_to_colour(n, max_iterations)
+}
+
+pub fn normalised_iter_count(iterations: f64, max_iterations: f64) -> Rgb {
+	todo!("get back broke ");
+	todo!("https://en.wikipedia.org/wiki/Plotting_algorithms_for_the_Mandelbrot_set#Continuous_(smooth)_coloring")
+}
+
+pub fn map_to_purple(iterations: f64, max_iterations: f64) -> Rgb {
 	if iterations == max_iterations {
 		Rgb::new(0., 0., 0.)
 	} else {

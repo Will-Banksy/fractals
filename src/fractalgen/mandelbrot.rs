@@ -20,5 +20,5 @@ pub fn calculate_pixel(x: u32, y: u32, transform: &PlaneTransform<f64>, max_iter
 		i += 1;
 	}
 
-	colouring::map_to_colour(i as f64, max_iterations as f64)
+	colouring::map_to_colour_loop(i as f64, max_iterations as f64)
 }

@@ -29,6 +29,7 @@ fn main() {
 	let scale = scale_presets[0];
 	let offset = offset_presets[0];
 	let mut transform = PlaneTransform::new().scale(scale).base_offset(offset);
+	let mut max_iters = 1000;
 
 	let mut window = Window::new(
 		"Fractals - ESC To Exit",
@@ -86,8 +87,22 @@ fn main() {
 			rerender = true;
 		}
 
+		window.get_keys().iter().for_each(|key| {
+			match key {
+				Key::X => {
+					max_iters = (max_iters as f64 * 1.1) as u32;
+					*&mut rerender = true;
+				},
+				Key::Z => {
+					max_iters = (max_iters as f64 / 1.1) as u32;
+					*&mut rerender = true;
+				},
+				_ => ()
+			}
+		});
+
 		if rerender {
-			fractalgen::cpu_renderer::multi_threaded::render_fractal_to(ImageBufferFormat::PixelArray(PixelArrayFormat::Argb32(&mut buffer)), FractalType::MandelbrotSet, dims, &transform, Some(1000));
+			fractalgen::cpu_renderer::multi_threaded::render_fractal_to(ImageBufferFormat::PixelArray(PixelArrayFormat::Argb32(&mut buffer)), FractalType::MandelbrotSet, dims, &transform, Some(max_iters));
 			rerender = false;
 		}
 

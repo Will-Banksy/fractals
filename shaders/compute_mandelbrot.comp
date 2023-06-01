@@ -30,12 +30,12 @@ vec3 to_vec_hsb(float h, float s, float br) {
 }
 
 void main() {
-	const uint max_iter = 100;
+	const uint max_iter = 1000;
 
 	vec2 xy = gl_GlobalInvocationID.xy;
 
-	vec2 base_offset = vec2(960, 600);
-	vec2 scale = vec2(0.002, 0.002);
+	vec2 base_offset = vec2(7680, 4320);
+	vec2 scale = vec2(0.0002, 0.0002);
 	vec2 transformed_offset = vec2(0.0, 0.0);
 
 	xy -= base_offset;
@@ -53,7 +53,7 @@ void main() {
 
 	vec3 rgb = vec3(0, 0, 0);
 	if(i != max_iter) {
-		rgb = to_vec_hsb((float(i) / 100.0) * 360.0, 1.0, 1.0);
+		rgb = to_vec_hsb((float(i) / float(max_iter)) * 360.0, 1.0, 1.0);
 	}
 
 	vec4 pixdat = vec4(rgb, 1.0);

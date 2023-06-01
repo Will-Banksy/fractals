@@ -1,6 +1,4 @@
-use fractals::fractalgen::{self, FractalType};
-
-use fractalgen::PlaneTransform;
+use fractals::fractalgen::{self, FractalType, PlaneTransform};
 
 fn main() {
 	#[allow(unused)]

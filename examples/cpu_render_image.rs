@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use fractals::fractalgen::{self, FractalType, PlaneTransform};
 
 fn main() {
@@ -7,21 +9,24 @@ fn main() {
 			(480u32, 360u32),
 			(15360, 8640),
 			(480, 360),
-			(480, 360)
+			(480, 360),
+			(3840, 2160)
 		],
 		[
 			(0.01, 0.01),
-			(0.0005, 0.0005),
+			(0.0002, 0.0002),
 			(0.000000028662414792174364, 0.000000028662414792174364),
 			(0.0000000012919080187191952, 0.0000000012919080187191952),
-			(0.000000000000007678375638976293, 0.000000000000007678375638976293)
+			(0.000000000000007678375638976293, 0.000000000000007678375638976293),
+			(0.05, 0.05),
 		],
 		[
 			(240., 180.),
 			(7680., 4320.),
 			(62327141.65736399, 213.97749196797176),
 			(769919577.7859883, 230132211.5792833),
-			(150615497492901.8, 39666261511409.945)
+			(150615497492901.8, 39666261511409.945),
+			(1920., 1080.)
 		]
 	);
 
@@ -30,6 +35,8 @@ fn main() {
 	let offset = offset_presets[1];//(960., 600.);//offset_presets[1];
 	let transform = PlaneTransform::new().scale(scale).base_offset(offset);
 
-	let img = fractalgen::cpu_renderer::multi_threaded::generate_fractal_image(FractalType::MandelbrotSet, dims, &transform, Some(500));
+	let start = Instant::now();
+	let img = fractalgen::cpu_renderer::multi_threaded::generate_fractal_image(FractalType::MandelbrotSet, dims, &transform, Some(1000));
+	println!("Elapsed: {}", start.elapsed().as_millis());
 	img.save(format!("mandelbrot.png")).unwrap();
 }

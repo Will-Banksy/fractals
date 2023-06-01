@@ -21,7 +21,7 @@ use vulkano::format::Format;
 mod test_shader {
 	vulkano_shaders::shader!{
 		ty: "compute",
-		path: "shaders/test_shader.glsl"
+		path: "shaders/test_shader.comp"
 	}
 }
 
